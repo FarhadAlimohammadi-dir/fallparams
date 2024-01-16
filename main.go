@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"fmt"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
@@ -27,8 +28,10 @@ var (
 	customHeaders                          arrayFlags
 	sleepTime, thread, maxLength, maxDepth int
 	headlessP, headlessC, crawlMode        bool
-	inputUrls, outputFile                  string
+	inputUrls, outputFile, dbPath           string
 	wg                                     sync.WaitGroup
+
+	db *sql.DB
 )
 
 const (
@@ -54,11 +57,7 @@ func main() {
 	flagSet.SetDescription("Find All Parameters")
 
 	createGroup(flagSet, "input", "Input",
-		flagSet.StringVarP(&inputUrls, "url", "u", "", "Input [Filename | URL]"),
-	)
-
-	createGroup(flagSet, "rate-limit", "Rate-Limit",
-		flagSet.IntVarP(&thread, "thread", "t", 1, "Number Of Thread [Number]"),
+		flagSetNumber Of Thread [Number]"),
 		flagSet.IntVarP(&sleepTime, "sleep", "s", 0, "Time for sleep after sending each request"),
 	)
 
@@ -68,6 +67,7 @@ func main() {
 		flagSet.BoolVarP(&headlessC, "headless-crawl", "hc", false, "Enable headless hybrid crawling (experimental)"),
 		flagSet.BoolVarP(&headlessP, "headless-parameter", "hp", false, "Discover parameters with headless browser"),
 		flagSet.VarP(&customHeaders, "header", "H", "Header `\"Name: Value\"`, separated by colon. Multiple -H flags are accepted."),
+		flagSet.StringVarP(&dbPath, "database", "db", "parameters.db", "Database path to save crawled links"),
 	)
 
 	createGroup(flagSet, "output", "Output",
@@ -93,6 +93,9 @@ func main() {
 	_, _ = os.Create(outputFile)
 	allUrls = clearUrls(allUrls)
 	allUrls = unique(allUrls)
+
+	db, _ = sql.Open("sqlite3", dbPath)
+	_, _ = db.Exec("CREATE TABLE IF NOT EXISTS links (url TEXT PRIMARY KEY)")
 
 	channel := make(chan string, len(allUrls))
 	for _, myLink := range allUrls {
@@ -286,15 +289,7 @@ func findParameter(link string) []string {
 		} else {
 			body = headlessBrowser(link)
 		}
-		cnHeader := strings.ToLower(httpRes.Header.Get("Content-Type"))
-
-		// Get parameter from url
-		linkParameter := queryStringKey(link)
-		allParameter = append(allParameter, linkParameter...)
-
-		// Variable Name
-		variableNamesRegex := myRegex(`(let|const|var)\s([\w\,\s]+)\s*?(\n|\r|;|=)`, body, []int{2})
-		var variableNames []string
+		cnHeader := strings.ToLower(httpRes.Header. []string
 		for _, v := range variableNamesRegex {
 			for _, j := range strings.Split(v, ",") {
 				variableNames = append(variableNames, strings.Replace(j, " ", "", -1))
@@ -303,40 +298,7 @@ func findParameter(link string) []string {
 		allParameter = append(allParameter, variableNames...)
 
 		// Json and Object keys
-		jsonObjectKey := myRegex(`["|']([\w\-]+)["|']\s*?:`, body, []int{1})
-		allParameter = append(allParameter, jsonObjectKey...)
-
-		// String format variable
-		stringFormat := myRegex(`\${(\s*[\w\-]+)\s*}`, body, []int{1})
-		allParameter = append(allParameter, stringFormat...)
-
-		// Function input
-		funcInput := myRegex(`.*\(\s*["|']?([\w\-]+)["|']?\s*(\,\s*["|']?([\w\-]+)["|']?\s*)?(\,\s*["|']?([\w\-]+)["|']?\s*)?(\,\s*["|']?([\w\-]+)["|']?\s*)?(\,\s*["|']?([\w\-]+)["|']?\s*)?(\,\s*["|']?([\w\-]+)["|']?\s*)?(\,\s*["|']?([\w\-]+)["|']?\s*)?(\,\s*["|']?([\w\-]+)["|']?\s*)?(\,\s*["|']?([\w\-]+)["|']?\s*)?(\,\s*["|']?([\w\-]+)["|']?\s*)?\)`,
-			body, []int{1, 3, 5, 7, 9, 11, 13, 15, 17, 19})
-		allParameter = append(allParameter, funcInput...)
-
-		// Path Input
-		pathInput := myRegex(`\/\{(.*)\}`, body, []int{1})
-		allParameter = append(allParameter, pathInput...)
-
-		// Query string key in source
-		queryString := myRegex(`(\?([\w\-]+)=)|(\&([\w\-]+)=)`, body, []int{2, 4})
-		allParameter = append(allParameter, queryString...)
-
-		if cnHeader != "application/javascript" {
-			// Name HTML attribute
-			inputName := myRegex(`name\s*?=\s*?["|']([\w\-]+)["|']`, body, []int{1})
-			allParameter = append(allParameter, inputName...)
-
-			// ID HTML attribute
-			htmlID := myRegex(`id\s*=\s*["|']([\w\-]+)["|']`, body, []int{1})
-			allParameter = append(allParameter, htmlID...)
-		}
-
-		// XML attributes
-		if strings.Contains(cnHeader, "xml") {
-			xmlAtr := myRegex(`<([a-zA-Z0-9$_\.-]*?)>`, body, []int{1})
-			allParameter = append(allParameter, xmlAtr...)
+		jsonObjectKey := myRegex(`[", xmlAtr...)
 		}
 	}
 	for _, v := range allParameter {
@@ -372,18 +334,11 @@ func unique(strSlice []string) []string {
 	return list
 }
 
-func saveResult(channel chan string) {
-	defer wg.Done()
-	for v := range channel {
-		for _, i := range unique(findParameter(v)) {
-			if len(i) <= maxLength {
-				file, err := os.OpenFile(outputFile, os.O_APPEND|os.O_WRONLY, 0666)
-				checkError(err)
-				_, err = fmt.Fprintln(file, i)
-				checkError(err)
-				err = file.Close()
-				checkError(err)
+func saveResultcheckError(err)
+				}
 			}
+			// Add the link to the database
+			addLinkToDatabase(v)
 		}
 	}
 }
@@ -409,10 +364,7 @@ func checkUpdate() {
 
 	if re.FindStringSubmatch(body)[1] != VERSION {
 		gologger.Print().Msg("")
-		gologger.Print().Msg("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
-		gologger.Print().Msg(fmt.Sprintf("|    %v🔥  Please update Fallparams!%v                                      |", colorGreen, colorReset))
-		gologger.Print().Msg("|    💣  Run: go install github.com/ImAyrix/fallparams@latest           |")
-		gologger.Print().Msg("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
+		gologger.Print().Msg("- - - - - - - - - - - - - - - - - - - - -")
 		gologger.Print().Msg("")
 	}
 
@@ -457,4 +409,16 @@ func checkError(e error) {
 	if e != nil {
 		fmt.Println(e.Error())
 	}
+}
+
+func linkExistsInDatabase(link string) bool {
+	row := db.QueryRow("SELECT url FROM links WHERE url = ?", link)
+	var url string
+	err := row.Scan(&url)
+	return err == nil
+}
+
+func addLinkToDatabase(link string) {
+	_, err := db.Exec("INSERT INTO links (url) VALUES (?)", link)
+	checkError(err)
 }
